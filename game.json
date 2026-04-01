@@ -1,0 +1,8 @@
+{
+  "title": "Pac-Man",
+  "description": "Eat the dots and avoid the ghosts in this retro arcade classic.",
+  "keywords": ["pacman", "arcade", "retro", "classic", "maze"],
+  "category": "Arcade",
+  "author": "PewPlay",
+  "playMode": "SinglePlayer"
+}
