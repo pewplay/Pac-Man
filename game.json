@@ -2,6 +2,28 @@
   "$schema": "https://raw.githubusercontent.com/pewplay/pewplay/main/schema/game.schema.json",
   "title": "Pac-Man",
   "description": "Eat the dots and avoid the ghosts in this retro arcade classic.",
+  "about": "Pac-Man is a browser game where you guide Pac-Man through the maze, collect dots and avoid ghosts. Eat a power pellet to turn the tables for a short time.\n\nStart a round in your browser and use the controls below to play.",
+  "howToPlay": "Guide Pac-Man through the maze, collect dots and avoid ghosts. Eat a power pellet to turn the tables for a short time.",
+  "controls": [
+    {
+      "input": "Arrow keys",
+      "action": "Move through the maze"
+    }
+  ],
+  "tips": [
+    "Use arrow keys to move through the maze.",
+    "Try another round to practice the timing and strategy."
+  ],
+  "faq": [
+    {
+      "question": "How do I play Pac-Man?",
+      "answer": "Guide Pac-Man through the maze, collect dots and avoid ghosts. Eat a power pellet to turn the tables for a short time."
+    },
+    {
+      "question": "Can I play Pac-Man in a browser?",
+      "answer": "Yes. Open the game page and play without installing an app."
+    }
+  ],
   "category": "Arcade",
   "tags": [
     "pacman",
@@ -10,14 +32,9 @@
     "classic",
     "maze"
   ],
-  "author": "PewPlay",
   "playMode": "SinglePlayer",
-  "exclude": [
-    "doc",
-    "promo",
-    "shots",
-    "mapgen",
-    "randturn",
-    "fruit"
-  ]
+  "orientation": "any",
+  "cover": "cover.png",
+  "draft": true,
+  "author": "PewPlay"
 }
