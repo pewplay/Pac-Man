@@ -1,8 +1,23 @@
 {
+  "$schema": "https://raw.githubusercontent.com/pewplay/pewplay/main/schema/game.schema.json",
   "title": "Pac-Man",
   "description": "Eat the dots and avoid the ghosts in this retro arcade classic.",
-  "keywords": ["pacman", "arcade", "retro", "classic", "maze"],
   "category": "Arcade",
+  "tags": [
+    "pacman",
+    "arcade",
+    "retro",
+    "classic",
+    "maze"
+  ],
   "author": "PewPlay",
-  "playMode": "SinglePlayer"
+  "playMode": "SinglePlayer",
+  "exclude": [
+    "doc",
+    "promo",
+    "shots",
+    "mapgen",
+    "randturn",
+    "fruit"
+  ]
 }
