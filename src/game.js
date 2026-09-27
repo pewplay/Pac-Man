@@ -262,8 +262,8 @@ var loadHighScores = function() {
     var hs;
     var hslen;
     var i;
-    if (localStorage && localStorage.getItem("Pac-Man:highScores")) {
-        hs = JSON.parse(localStorage.getItem("Pac-Man:highScores"));
+    if (localStorage && localStorage.highScores) {
+        hs = JSON.parse(localStorage.highScores);
         hslen = hs.length;
         for (i=0; i<hslen; i++) {
             highScores[i] = Math.max(highScores[i],hs[i]);
@@ -272,6 +272,6 @@ var loadHighScores = function() {
 };
 var saveHighScores = function() {
     if (localStorage) {
-        localStorage.setItem("Pac-Man:highScores", JSON.stringify(highScores));
+        localStorage.highScores = JSON.stringify(highScores);
     }
 };
