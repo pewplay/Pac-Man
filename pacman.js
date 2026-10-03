@@ -65,12 +65,68 @@ var DEBUG = false;
 //@line 1 "src/sound.js"
 /* Sound handlers added by Dr James Freeman who was sad such a great reverse was a silent movie  */
 
+// all <audio> elements, so they can be muted or paused together (PewPlay)
+var audioElements = [];
+var soundMuted = false;
+var setSoundMuted = function(muted) {
+    soundMuted = !!muted;
+    for (var i=0; i<audioElements.length; i++) audioElements[i].muted = soundMuted;
+};
+var pausedAudioElements = [];
+var suspendAllAudio = function() {
+    for (var i=0; i<audioElements.length; i++) {
+        var a = audioElements[i];
+        if (!a.paused) {
+            a.pause();
+            if (pausedAudioElements.indexOf(a) < 0) pausedAudioElements.push(a);
+        }
+    }
+};
+var resumeAllAudio = function() {
+    var list = pausedAudioElements;
+    pausedAudioElements = [];
+    for (var i=0; i<list.length; i++) {
+        try {
+            var pr = list[i].play();
+            if (pr) pr.catch(function(){});
+        } catch (e) {}
+    }
+};
+
 var audio = new preloadAudio();
 
 function audioTrack(url, volume) {
-    var audio = new Audio(url);
+    var audio = new Audio();
+    audio.preload = 'auto';
     if (volume) audio.volume = volume;
-    audio.load();
+    audio.muted = soundMuted;
+    audioElements.push(audio);
+    // Load the whole file once and play it from memory (avoids repeated/aborted
+    // range requests while seeking). Direct URL when opened from disk.
+    var ready = false, pendingPlay = false;
+    var setSource = function(src) {
+        audio.src = src;
+        ready = true;
+        if (pendingPlay) { pendingPlay = false; playSound(); }
+    };
+    if (location.protocol == 'file:' || !window.XMLHttpRequest || !window.URL || !URL.createObjectURL) {
+        setSource(url);
+    }
+    else {
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.responseType = 'blob';
+            xhr.onload = function() {
+                setSource((xhr.status == 200 && xhr.response) ? URL.createObjectURL(xhr.response) : url);
+            };
+            xhr.onerror = function() { setSource(url); };
+            xhr.send();
+        }
+        catch (e) {
+            setSource(url);
+        }
+    }
     var looping = false;
     this.play = function(noResetTime) {
         playSound(noResetTime);
@@ -82,6 +138,7 @@ function audioTrack(url, volume) {
         looping = true;
     };
     this.stopLoop = function(noResetTime) {
+        pendingPlay = false;
         try{ audio.removeEventListener('ended', audioLoop) } catch (e) {};
         audio.pause();
         if (!noResetTime) audio.currentTime = 0;
@@ -99,6 +156,7 @@ function audioTrack(url, volume) {
         playSound(noResetTime);
     }
     function playSound(noResetTime) {
+        if (!ready) { pendingPlay = true; return; }
         // for really rapid sound repeat set noResetTime
         if(!audio.paused) {
             audio.pause();
@@ -110,7 +168,7 @@ function audioTrack(url, volume) {
                 playPromise.then(function(){}).catch(function(err){});
             }
         } 
-        catch(err){ console.error(err) }
+        catch(err){}
     }
 }
 
@@ -418,22 +476,29 @@ var setHighScore = function(highScore) {
 };
 // High Score Persistence
 
+var HIGH_SCORE_KEY = "Pac-Man:highScores";
 var loadHighScores = function() {
-    var hs;
-    var hslen;
-    var i;
-    if (localStorage && localStorage.highScores) {
-        hs = JSON.parse(localStorage.highScores);
-        hslen = hs.length;
-        for (i=0; i<hslen; i++) {
-            highScores[i] = Math.max(highScores[i],hs[i]);
+    var hs, raw, i;
+    try {
+        raw = localStorage.getItem(HIGH_SCORE_KEY);
+        if (raw != null) {
+            hs = JSON.parse(raw);
+            if (Array.isArray(hs)) {
+                for (i=0; i<hs.length && i<9; i++) {
+                    if (typeof hs[i] == "number" && isFinite(hs[i])) {
+                        highScores[i] = (highScores[i] == undefined) ? hs[i] : Math.max(highScores[i],hs[i]);
+                    }
+                }
+            }
         }
     }
+    catch (e) {}
 };
 var saveHighScores = function() {
-    if (localStorage) {
-        localStorage.highScores = JSON.stringify(highScores);
+    try {
+        localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(highScores));
     }
+    catch (e) {}
 };
 //@line 1 "src/direction.js"
 //////////////////////////////////////////////////////////////////////////////////////
@@ -3063,6 +3128,7 @@ var renderer_list;
 var renderer;
 
 var renderScale;
+var relayout = function() {};
 
 var mapMargin = 4*tileSize; // margin between the map and the screen
 var mapPad = tileSize/8; // padding between the map and its clipping
@@ -3083,14 +3149,8 @@ var switchRenderer = function(i) {
 };
 
 var getDevicePixelRatio = function() {
-    // Only consider the device pixel ratio for devices that are <= 320 pixels in width.
-    // This is necessary for the iPhone4's retina display; otherwise the game would be blurry.
-    // The iPad3's retina display @ 2048x1536 starts slowing the game down.
-    return 1;
-    if (window.innerWidth <= 320) {
-        return window.devicePixelRatio || 1;
-    }
-    return 1;
+    // render at the device's real resolution so the vector graphics stay crisp
+    return Math.min(window.devicePixelRatio || 1, 3);
 };
 
 var initRenderer = function(){
@@ -3098,78 +3158,52 @@ var initRenderer = function(){
     var bgCanvas;
     var ctx, bgCtx;
 
-    // drawing scale
+    // drawing scale (game pixels -> canvas pixels)
     var scale = 2;        // scale everything by this amount
 
     // (temporary global version of scale just to get things quickly working)
     renderScale = scale; 
 
-    var resets = 0;
-
     // rescale the canvases
     var resetCanvasSizes = function() {
 
         // set the size of the canvas in actual pixels
-        canvas.width = screenWidth * scale;
-        canvas.height = screenHeight * scale;
-
-        // set the size of the canvas in browser pixels
-        var ratio = getDevicePixelRatio();
-        canvas.style.width = canvas.width / ratio;
-        canvas.style.height = canvas.height / ratio;
-
-        if (resets > 0) {
-            ctx.restore();
-        }
-        ctx.save();
+        // (setting the size also resets the context state)
+        canvas.width = Math.round(screenWidth * scale);
+        canvas.height = Math.round(screenHeight * scale);
+        ctx.setTransform(1,0,0,1,0,0);
         ctx.scale(scale,scale);
 
-        bgCanvas.width = mapWidth * scale;
-        bgCanvas.height = mapHeight * scale;
-        if (resets > 0) {
-            bgCtx.restore();
-        }
-        bgCtx.save();
+        bgCanvas.width = Math.ceil(mapWidth * scale);
+        bgCanvas.height = Math.ceil(mapHeight * scale);
+        bgCtx.setTransform(1,0,0,1,0,0);
         bgCtx.scale(scale,scale);
-
-        resets++;
     };
 
-    // get the target scale that will cause the canvas to fit the window
-    var getTargetScale = function() {
-        var sx = (window.innerWidth - 10) / screenWidth;
-        var sy = (window.innerHeight - 10) / screenHeight;
-        var s = Math.min(sx,sy);
-        s *= getDevicePixelRatio();
-        return s;
-    };
-
-    // maximize the scale to fit the window
+    // fit the canvas to the window (PewPlay layout: see pewUI.computeLayout)
+    var sized = false;
     var fullscreen = function() {
-        // NOTE: css-scaling alternative at https://gist.github.com/1184900
-        renderScale = scale = getTargetScale();
-        resetCanvasSizes();
-        atlas.create();
-        if (renderer) {
-            renderer.drawMap();
+        var lay = pewUI.computeLayout();
+        var maxPx = 4096;
+        var newScale = lay.cssScale * getDevicePixelRatio();
+        newScale = Math.min(newScale, maxPx/screenWidth, maxPx/screenHeight);
+        newScale = Math.max(newScale, 0.5);
+        if (Math.abs(newScale - scale) > 1e-4 || !sized) {
+            sized = true;
+            renderScale = scale = newScale;
+            resetCanvasSizes();
+            atlas.create();
+            if (renderer) {
+                renderer.drawMap();
+            }
         }
-        center();
+        canvas.style.width = (screenWidth*lay.cssScale) + "px";
+        canvas.style.height = (screenHeight*lay.cssScale) + "px";
+        canvas.style.left = lay.canvasLeft + "px";
+        canvas.style.top = lay.canvasTop + "px";
+        pewUI.applyLayout(lay);
     };
-
-    // center the canvas in the window
-    var center = function() {
-        var s = getTargetScale()/getDevicePixelRatio();
-        var w = screenWidth*s;
-        var x = Math.max(0,(window.innerWidth-10)/2 - w/2);
-        var y = 0;
-        /*
-        canvas.style.position = "absolute";
-        canvas.style.left = x;
-        canvas.style.top = y;
-        console.log(canvas.style.left);
-        */
-        document.body.style.marginLeft = (window.innerWidth - w)/2 + "px";
-    };
+    relayout = fullscreen;
 
     // create foreground and background canvases
     canvas = document.getElementById('canvas');
@@ -3180,12 +3214,17 @@ var initRenderer = function(){
     // initialize placement and size
     fullscreen();
 
-    // adapt placement and size to window resizes
+    // adapt placement and size to window resizes and orientation changes
     var resizeTimeout;
-    window.addEventListener('resize', function () {
+    var onResize = function () {
         clearTimeout(resizeTimeout);
-        resizeTimeout = setTimeout(fullscreen, 100);
-    }, false);
+        resizeTimeout = setTimeout(fullscreen, 60);
+    };
+    window.addEventListener('resize', onResize, false);
+    window.addEventListener('orientationchange', onResize, false);
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', onResize, false);
+    }
 
     //////////////////////
 
@@ -4241,29 +4280,13 @@ var galagaStars = (function() {
 })();
 //@line 1 "src/Button.js"
 var getPointerPos = function(evt) {
-    var obj = canvas;
-    var top = 0;
-    var left = 0;
-    while (obj.tagName != 'BODY') {
-        top += obj.offsetTop;
-        left += obj.offsetLeft;
-        obj = obj.offsetParent;
-    }
-
-    // calculate relative mouse position
-    var mouseX = evt.pageX - left;
-    var mouseY = evt.pageY - top;
-
-    // make independent of scale
-    var ratio = getDevicePixelRatio();
-    mouseX /= (renderScale / ratio);
-    mouseY /= (renderScale / ratio);
-
-    // offset
-    mouseX -= mapMargin;
-    mouseY -= mapMargin;
-
-    return { x: mouseX, y: mouseY };
+    // convert client coordinates to map coordinates (works with any CSS scaling)
+    var rect = canvas.getBoundingClientRect();
+    var k = rect.width ? screenWidth / rect.width : 1;
+    return {
+        x: (evt.clientX - rect.left) * k - mapMargin - mapPad,
+        y: (evt.clientY - rect.top) * k - mapMargin - mapPad,
+    };
 };
 
 var Button = function(x,y,w,h,onclick) {
@@ -4286,87 +4309,62 @@ var Button = function(x,y,w,h,onclick) {
 
     this.isSelected = false;
 
-    // touch events
+    // pointer events (mouse, touch and pen)
     this.startedInside = false;
     var that = this;
-    var touchstart = function(evt) {
-        evt.preventDefault();
-        var fingerCount = evt.touches.length;
-        if (fingerCount == 1) {
-            var pos = getPointerPos(evt.touches[0]);
-            (that.startedInside=that.contains(pos.x,pos.y)) ? that.focus() : that.blur();
-        }
-        else {
-            touchcancel(evt);
+    var pointerdown = function(evt) {
+        if (!evt.isPrimary || (evt.pointerType == 'mouse' && evt.button != 0)) return;
+        var pos = getPointerPos(evt);
+        (that.startedInside = that.contains(pos.x,pos.y)) ? that.focus() : that.blur();
+    };
+    var pointermove = function(evt) {
+        if (!evt.isPrimary) return;
+        var pos = getPointerPos(evt);
+        if (that.startedInside || evt.pointerType == 'mouse') {
+            // mouse hover, or dragging a finger in/out of the pressed button
+            that.contains(pos.x, pos.y) ? that.focus() : that.blur();
         }
     };
-    var touchmove = function(evt) {
-        evt.preventDefault();
-        var fingerCount = evt.touches.length;
-        if (fingerCount == 1) {
-            if (that.startedInside) {
-                var pos = getPointerPos(evt.touches[0]);
-                that.contains(pos.x, pos.y) ? that.focus() : that.blur();
-            }
-        }
-        else {
-            touchcancel(evt);
-        }
-    };
-    var touchend = function(evt) {
-        evt.preventDefault();
-        var registerClick = (that.startedInside && that.isSelected);
-        if (registerClick) {
-            that.click();
-        }
-        touchcancel(evt);
-        if (registerClick) {
-            // focus the button to keep it highlighted after successful click
-            that.focus();
-        }
-    };
-    var touchcancel = function(evt) {
-        evt.preventDefault();
-        this.startedInside = false;
-        that.blur();
-    };
-
-
-    // mouse events
-    var click = function(evt) {
+    var pointerup = function(evt) {
+        if (!evt.isPrimary || !that.startedInside) return;
+        that.startedInside = false;
         var pos = getPointerPos(evt);
         if (that.contains(pos.x, pos.y)) {
             that.click();
+            // keep the button highlighted after a successful click
+            that.focus();
+        }
+        else {
+            that.blur();
         }
     };
-    var mousemove = function(evt) {
-        var pos = getPointerPos(evt);
-        that.contains(pos.x, pos.y) ? that.focus() : that.blur();
-    };
-    var mouseleave = function(evt) {
+    var pointercancel = function(evt) {
+        that.startedInside = false;
         that.blur();
+    };
+    var pointerleave = function(evt) {
+        if (evt.pointerType == 'mouse') {
+            that.blur();
+        }
     };
 
     this.isEnabled = false;
     this.onEnable = function() {
-        canvas.addEventListener('click', click);
-        canvas.addEventListener('mousemove', mousemove);
-        canvas.addEventListener('mouseleave', mouseleave);
-        canvas.addEventListener('touchstart', touchstart);
-        canvas.addEventListener('touchmove', touchmove);
-        canvas.addEventListener('touchend', touchend);
-        canvas.addEventListener('touchcancel', touchcancel);
+        canvas.addEventListener('pointerdown', pointerdown);
+        canvas.addEventListener('pointermove', pointermove);
+        canvas.addEventListener('pointerup', pointerup);
+        canvas.addEventListener('pointercancel', pointercancel);
+        canvas.addEventListener('pointerleave', pointerleave);
         this.isEnabled = true;
     };
 
     this.onDisable = function() {
-        canvas.removeEventListener('click', click);
-        canvas.removeEventListener('mousemove', mousemove);
-        canvas.removeEventListener('mouseleave', mouseleave);
-        canvas.removeEventListener('touchstart', touchstart);
-        canvas.removeEventListener('touchmove', touchmove);
-        canvas.removeEventListener('touchend', touchend);
-        canvas.removeEventListener('touchcancel', touchcancel);
+        canvas.removeEventListener('pointerdown', pointerdown);
+        canvas.removeEventListener('pointermove', pointermove);
+        canvas.removeEventListener('pointerup', pointerup);
+        canvas.removeEventListener('pointercancel', pointercancel);
+        canvas.removeEventListener('pointerleave', pointerleave);
+        that.startedInside = false;
         that.blur();
         this.isEnabled = false;
     };
@@ -4531,8 +4529,12 @@ Menu.prototype = {
         for (i=0; i<this.buttonCount; i++) {
             if (this.buttons[i].isSelected) {
                 this.buttons[i].onclick();
-                break;
+                return;
             }
+        }
+        // nothing highlighted yet: highlight the first option
+        if (this.buttonCount) {
+            this.buttons[0].focus();
         }
     },
 
@@ -9478,8 +9480,24 @@ var executive = (function(){
         },
         init: function() {
             var that = this;
-            window.addEventListener('focus', function() {that.start();});
-            window.addEventListener('blur', function() {that.stop();});
+            // pause everything (including sounds) while the game is hidden or unfocused
+            var resume = function() {
+                if (document.hidden) return;
+                that.start();
+                resumeAllAudio();
+                pewUI.setSuspended(false);
+            };
+            var suspend = function() {
+                that.stop();
+                suspendAllAudio();
+                pewUI.setSuspended(true);
+            };
+            window.addEventListener('focus', resume);
+            window.addEventListener('blur', suspend);
+            document.addEventListener('visibilitychange', function() {
+                document.hidden ? suspend() : resume();
+            });
+            pewUI.onResumeRequest = resume;
             this.start();
         },
         start: function() {
@@ -9510,6 +9528,7 @@ var state;
 
 // switches to another game state
 var switchState = function(nextState,fadeDuration, continueUpdate1, continueUpdate2) {
+    targetState = nextState;
     state = (fadeDuration) ? fadeNextState(state,nextState,fadeDuration,continueUpdate1, continueUpdate2) : nextState;
     audio.silence();
     state.init();
@@ -11310,7 +11329,7 @@ var overState = (function() {
             state == overState);
     };
     addKeyDown(KEY_N, function() { switchState(readyNewState, 60); }, canSkip);
-    addKeyDown(KEY_M, function() { switchState(finishState); }, function() { return state == playState; });
+    addKeyDown(KEY_M, function() { switchState(finishState); }, function() { return state == playState && practiceMode; });
 
     // Draw Actor Targets (fishpoles)
     addKeyDown(KEY_Q, function() { blinky.isDrawTarget = !blinky.isDrawTarget; }, isPracticeMode);
@@ -11337,82 +11356,43 @@ var overState = (function() {
 
 var initSwipe = function() {
 
-    // position of anchor
-    var x = 0;
-    var y = 0;
+    // swipe anywhere (outside the on-screen controls) to steer Pac-Man.
+    // The anchor follows the finger, so one long drag can make several turns.
+    var id = null;
+    var x = 0, y = 0;
+    var moved = false;
+    var r = 7; // minimum distance (CSS px) before a direction is registered
 
-    // current distance from anchor
-    var dx = 0;
-    var dy = 0;
-
-    // minimum distance from anchor before direction is registered
-    var r = 4;
-    
-    var touchStart = function(event) {
-        event.preventDefault();
-        var fingerCount = event.touches.length;
-        if (fingerCount == 1) {
-
-            // commit new anchor
-            x = event.touches[0].pageX;
-            y = event.touches[0].pageY;
-
-        }
-        else {
-            touchCancel(event);
-        }
-    };
-
-    var touchMove = function(event) {
-        event.preventDefault();
-        var fingerCount = event.touches.length;
-        if (fingerCount == 1) {
-
-            // get current distance from anchor
-            dx = event.touches[0].pageX - x;
-            dy = event.touches[0].pageY - y;
-
-            // if minimum move distance is reached
-            if (dx*dx+dy*dy >= r*r) {
-
-                // commit new anchor
-                x += dx;
-                y += dy;
-
-                // register direction
-                if (Math.abs(dx) >= Math.abs(dy)) {
-                    pacman.setInputDir(dx>0 ? DIR_RIGHT : DIR_LEFT);
-                }
-                else {
-                    pacman.setInputDir(dy>0 ? DIR_DOWN : DIR_UP);
-                }
+    document.addEventListener('pointerdown', function(e) {
+        if (e.pointerType == 'mouse' || !e.isPrimary) return;
+        if (e.target && e.target.closest && e.target.closest('.pp-ui')) return;
+        id = e.pointerId;
+        x = e.clientX;
+        y = e.clientY;
+        moved = false;
+    });
+    document.addEventListener('pointermove', function(e) {
+        if (e.pointerId !== id) return;
+        var dx = e.clientX - x;
+        var dy = e.clientY - y;
+        if (dx*dx+dy*dy >= r*r) {
+            x += dx;
+            y += dy;
+            moved = true;
+            if (Math.abs(dx) >= Math.abs(dy)) {
+                pacman.setInputDir(dx>0 ? DIR_RIGHT : DIR_LEFT);
+            }
+            else {
+                pacman.setInputDir(dy>0 ? DIR_DOWN : DIR_UP);
             }
         }
-        else {
-            touchCancel(event);
-        }
+    });
+    var end = function(e) {
+        if (e.pointerId !== id) return;
+        id = null;
     };
-
-    var touchEnd = function(event) {
-        event.preventDefault();
-    };
-
-    var touchCancel = function(event) {
-        event.preventDefault();
-        x=y=dx=dy=0;
-    };
-
-    var touchTap = function(event) {
-        // tap to clear input directions
-        pacman.clearInputDir(undefined);
-    };
-    
-    // register touch events
-    document.onclick = touchTap;
-    document.ontouchstart = touchStart;
-    document.ontouchend = touchEnd;
-    document.ontouchmove = touchMove;
-    document.ontouchcancel = touchCancel;
+    document.addEventListener('pointerup', end);
+    document.addEventListener('pointercancel', end);
 };
 //@line 1 "src/cutscenes.js"
 ////////////////////////////////////////////////
@@ -13505,12 +13485,368 @@ var vcr = (function() {
         },
     };
 })();
+//@line 1 "PewPlay touch controls and layout"
+//////////////////////////////////////////////////////////////////////////////////////
+// PewPlay UI
+// - fits the canvas to the whole window/iframe at any size or orientation
+// - on touch screens: an on-screen D-pad (outside the maze), a pause button
+// - a sound on/off button
+// - a "paused" overlay when the game loses focus or is hidden
+
+var targetState; // the state we are switching (or fading) to
+
+var pewUI = (function() {
+
+    var MUTE_KEY = "Pac-Man:muted";
+
+    var controls, dpad, dpadArrows = {}, pauseBtn, muteBtn, pausedOverlay;
+    var touchMode = false;
+    var lastLayoutKey = "";
+    var lastDpadVisible = null, lastPauseVisible = null;
+    var activeDir = null;
+
+    var isCoarse = function() {
+        try {
+            return window.matchMedia("(pointer: coarse)").matches;
+        }
+        catch (e) {
+            return false;
+        }
+    };
+
+    var readInsets = function() {
+        var probe = document.getElementById("pp-safe");
+        var cs = probe ? getComputedStyle(probe) : null;
+        var px = function(v) { return cs ? (parseFloat(cs[v]) || 0) : 0; };
+        return { top: px("paddingTop"), right: px("paddingRight"), bottom: px("paddingBottom"), left: px("paddingLeft") };
+    };
+
+    // part of the virtual screen (in game pixels) that must be visible
+    var getViewRect = function() {
+        if (practiceMode) {
+            // practice mode puts rewind/slow-motion buttons in the side margins
+            return { x: 0, y: 0, w: screenWidth, h: screenHeight };
+        }
+        var m = 3;
+        return {
+            x: mapMargin - m,
+            y: mapMargin - m,
+            w: mapWidth + 2*m,
+            h: screenHeight - mapMargin + m, // keep the MENU button below the maze
+        };
+    };
+
+    var computeLayout = function() {
+        var W = document.documentElement.clientWidth || window.innerWidth;
+        var H = document.documentElement.clientHeight || window.innerHeight;
+        var ins = readInsets();
+        var aW = Math.max(50, W - ins.left - ins.right);
+        var aH = Math.max(50, H - ins.top - ins.bottom);
+        var v = getViewRect();
+        var lay = { W: W, H: H, touch: touchMode };
+        var s, cw, ch, cx, cy;
+
+        if (!touchMode) {
+            s = Math.min(aW / v.w, aH / v.h);
+            cw = v.w*s; ch = v.h*s;
+            cx = ins.left + (aW - cw)/2;
+            cy = ins.top + (aH - ch)/2;
+        }
+        else {
+            var gap = 10;
+            var bar = 44;
+            var pad = Math.max(110, Math.min(200, Math.min(aW, aH) * 0.42));
+
+            // option A: controls in a band below the maze
+            var bandH = pad + bar + gap*3;
+            var sA = Math.min(aW / v.w, (aH - bandH) / v.h);
+
+            // option B: controls in a column beside the maze
+            var padB = Math.max(100, Math.min(pad, aH - bar - gap*3));
+            var bandW = padB + gap*2;
+            var sB = Math.min((aW - bandW) / v.w, aH / v.h);
+
+            if (sA >= sB) {
+                s = sA;
+                cw = v.w*s; ch = v.h*s;
+                var free = aH - ch - bandH;
+                cx = ins.left + (aW - cw)/2;
+                cy = ins.top + free*0.3;
+                lay.zone = { x: ins.left, y: cy + ch, w: aW, h: ins.top + aH - (cy + ch) };
+                lay.pad = pad;
+                lay.vertical = true;
+            }
+            else {
+                s = sB;
+                cw = v.w*s; ch = v.h*s;
+                var side = (aW - cw)/2;
+                cx = ins.left + (side >= bandW ? side : (aW - bandW - cw)/2);
+                cy = ins.top + (aH - ch)/2;
+                lay.zone = { x: cx + cw, y: ins.top, w: ins.left + aW - (cx + cw), h: aH };
+                lay.pad = padB;
+                lay.vertical = false;
+            }
+            lay.bar = bar;
+            lay.gap = gap;
+        }
+
+        lay.cssScale = s;
+        lay.canvasLeft = cx - v.x*s;
+        lay.canvasTop = cy - v.y*s;
+        lay.view = { x: cx, y: cy, w: cw, h: ch };
+        lay.insets = ins;
+        return lay;
+    };
+
+    var applyLayout = function(lay) {
+        if (!controls) return;
+        if (lay.touch && lay.zone) {
+            var z = lay.zone;
+            var p = Math.floor(lay.pad);
+            controls.style.display = "block";
+            controls.style.left = z.x + "px";
+            controls.style.top = z.y + "px";
+            controls.style.width = z.w + "px";
+            controls.style.height = z.h + "px";
+            dpad.style.width = dpad.style.height = p + "px";
+            // the D-pad sits in the lower part of the free area, under the thumb
+            var total = lay.bar + lay.gap + p;
+            var top = Math.max(lay.gap, (z.h - total) * (lay.vertical ? 0.5 : 0.62));
+            dpad.style.left = Math.round((z.w - p)/2) + "px";
+            dpad.style.top = Math.round(top + lay.bar + lay.gap) + "px";
+            var row = document.getElementById("pp-row");
+            row.style.top = Math.round(top) + "px";
+            // the sound button lives in the control row on touch screens
+            if (muteBtn.parentNode != row) row.appendChild(muteBtn);
+            muteBtn.className = "pp-ui pp-btn";
+        }
+        else {
+            controls.style.display = "none";
+            if (muteBtn.parentNode != document.body) document.body.appendChild(muteBtn);
+            muteBtn.className = "pp-ui pp-btn pp-corner";
+            muteBtn.style.top = (lay.insets.top + 8) + "px";
+            muteBtn.style.right = (lay.insets.right + 8) + "px";
+        }
+    };
+
+    var setTouchMode = function(on) {
+        if (touchMode == on) return;
+        touchMode = on;
+        document.documentElement.classList.toggle("pp-touch", on);
+        relayout();
+    };
+
+    // ---------- sound
+    var refreshMute = function() {
+        muteBtn.innerHTML = soundMuted ?
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>' :
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>';
+        muteBtn.setAttribute("aria-label", soundMuted ? "Turn sound on" : "Turn sound off");
+        muteBtn.title = soundMuted ? "Sound off" : "Sound on";
+    };
+    var toggleMute = function() {
+        setSoundMuted(!soundMuted);
+        try { localStorage.setItem(MUTE_KEY, soundMuted ? "1" : "0"); } catch (e) {}
+        refreshMute();
+    };
+
+    // ---------- D-pad
+    var dirNames = {};
+    dirNames[DIR_UP] = "up"; dirNames[DIR_DOWN] = "down"; dirNames[DIR_LEFT] = "left"; dirNames[DIR_RIGHT] = "right";
+
+    var highlight = function(dir) {
+        for (var k in dpadArrows) {
+            dpadArrows[k].classList.toggle("on", dir != null && dirNames[dir] == k);
+        }
+    };
+
+    var dpadPointer = null;
+    var dpadDir = function(e) {
+        var r = dpad.getBoundingClientRect();
+        var dx = e.clientX - (r.left + r.width/2);
+        var dy = e.clientY - (r.top + r.height/2);
+        if (dx*dx + dy*dy < Math.pow(r.width*0.12, 2)) return null;
+        if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? DIR_RIGHT : DIR_LEFT;
+        return dy > 0 ? DIR_DOWN : DIR_UP;
+    };
+    var dpadInput = function(e) {
+        var dir = dpadDir(e);
+        if (dir != null && dir !== activeDir) {
+            activeDir = dir;
+            // like a swipe, the direction stays queued until Pac-Man can turn
+            pacman.setInputDir(dir);
+        }
+        highlight(dir);
+    };
+
+    var initDpad = function() {
+        dpad.addEventListener("pointerdown", function(e) {
+            e.preventDefault();
+            setTouchMode(true);
+            dpadPointer = e.pointerId;
+            try { dpad.setPointerCapture(e.pointerId); } catch (err) {}
+            activeDir = null;
+            dpadInput(e);
+        });
+        dpad.addEventListener("pointermove", function(e) {
+            if (e.pointerId !== dpadPointer) return;
+            dpadInput(e);
+        });
+        var up = function(e) {
+            if (e.pointerId !== dpadPointer) return;
+            dpadPointer = null;
+            activeDir = null;
+            highlight(null);
+        };
+        dpad.addEventListener("pointerup", up);
+        dpad.addEventListener("pointercancel", up);
+        dpad.addEventListener("lostpointercapture", up);
+    };
+
+    var isPlayLike = function(s) {
+        return s == newGameState || s == readyNewState || s == readyRestartState ||
+            s == playState || s == deadState || s == finishState;
+    };
+
+    var canOpenMenu = function() {
+        return hud.isValidState() && !inGameMenu.isOpen() && inGameMenu.getMenuButton().isEnabled;
+    };
+
+    // keep the controls in sync with the game state
+    var watch = function() {
+        var key = (practiceMode ? "p" : "n") + (touchMode ? "t" : "d");
+        if (key != lastLayoutKey) {
+            lastLayoutKey = key;
+            relayout();
+        }
+        if (controls) {
+            var dv = touchMode && isPlayLike(targetState) && !inGameMenu.isOpen();
+            if (dv !== lastDpadVisible) {
+                lastDpadVisible = dv;
+                dpad.classList.toggle("pp-hidden", !dv);
+                if (!dv) { activeDir = null; highlight(null); }
+            }
+            var pv = touchMode && canOpenMenu();
+            if (pv !== lastPauseVisible) {
+                lastPauseVisible = pv;
+                pauseBtn.classList.toggle("pp-hidden", !pv);
+            }
+        }
+        requestAnimationFrame(watch);
+    };
+
+    var makeButton = function(id, label) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.id = id;
+        b.className = "pp-ui pp-btn";
+        b.setAttribute("aria-label", label);
+        b.addEventListener("contextmenu", function(e) { e.preventDefault(); });
+        return b;
+    };
+
+    var init = function() {
+        try {
+            if (localStorage.getItem(MUTE_KEY) == "1") setSoundMuted(true);
+        } catch (e) {}
+
+        var safe = document.createElement("div");
+        safe.id = "pp-safe";
+        document.body.appendChild(safe);
+
+        controls = document.createElement("div");
+        controls.id = "pp-controls";
+        controls.className = "pp-ui";
+
+        var row = document.createElement("div");
+        row.id = "pp-row";
+        pauseBtn = makeButton("pp-pause", "Pause");
+        pauseBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg>';
+        pauseBtn.addEventListener("click", function() {
+            if (canOpenMenu()) inGameMenu.getMenuButton().onclick();
+        });
+        row.appendChild(pauseBtn);
+        controls.appendChild(row);
+
+        dpad = document.createElement("div");
+        dpad.id = "pp-dpad";
+        dpad.className = "pp-ui pp-hidden";
+        dpad.setAttribute("aria-label", "Direction pad");
+        var arrowPaths = {
+            up: "M50 9 L63 27 L37 27 Z",
+            down: "M50 91 L63 73 L37 73 Z",
+            left: "M9 50 L27 37 L27 63 Z",
+            right: "M91 50 L73 37 L73 63 Z",
+        };
+        var svg = '<svg viewBox="0 0 100 100" aria-hidden="true">' +
+            '<circle cx="50" cy="50" r="47" class="pp-ring"/>' +
+            '<path d="M38 4 h24 v34 h34 v24 h-34 v34 h-24 v-34 h-34 v-24 h34 z" class="pp-cross"/>' +
+            '<circle cx="50" cy="50" r="6" class="pp-hub"/>';
+        for (var k in arrowPaths) {
+            svg += '<path data-dir="' + k + '" d="' + arrowPaths[k] + '" class="pp-arrow"/>';
+        }
+        svg += "</svg>";
+        dpad.innerHTML = svg;
+        var arrows = dpad.querySelectorAll(".pp-arrow");
+        for (var i=0; i<arrows.length; i++) {
+            dpadArrows[arrows[i].getAttribute("data-dir")] = arrows[i];
+        }
+        controls.appendChild(dpad);
+        document.body.appendChild(controls);
+        initDpad();
+
+        muteBtn = makeButton("pp-mute", "Sound");
+        muteBtn.addEventListener("click", toggleMute);
+        document.body.appendChild(muteBtn);
+        refreshMute();
+
+        pausedOverlay = document.createElement("div");
+        pausedOverlay.id = "pp-paused";
+        pausedOverlay.className = "pp-ui pp-hidden";
+        pausedOverlay.innerHTML = '<div><div class="pp-ptitle">PAUSED</div><div class="pp-psub">Click or tap to continue</div></div>';
+        pausedOverlay.addEventListener("pointerdown", function(e) {
+            e.preventDefault();
+            try { window.focus(); } catch (err) {}
+            if (pewUI.onResumeRequest) pewUI.onResumeRequest();
+        });
+        document.body.appendChild(pausedOverlay);
+
+        // any touch switches to the touch layout, a real mouse switches back
+        touchMode = isCoarse();
+        document.documentElement.classList.toggle("pp-touch", touchMode);
+        window.addEventListener("pointerdown", function(e) {
+            if (e.pointerType == "touch" || e.pointerType == "pen") setTouchMode(true);
+            else if (e.pointerType == "mouse" && !isCoarse()) setTouchMode(false);
+        }, true);
+        window.addEventListener("keydown", function(e) {
+            if ((e.key == "m" || e.key == "M") && !practiceMode) {
+                // M toggles sound (outside practice mode, where M is a cheat key)
+                toggleMute();
+            }
+        });
+        document.addEventListener("contextmenu", function(e) { e.preventDefault(); });
+
+        requestAnimationFrame(watch);
+    };
+
+    return {
+        init: init,
+        computeLayout: computeLayout,
+        applyLayout: applyLayout,
+        setSuspended: function(on) {
+            if (pausedOverlay) pausedOverlay.classList.toggle("pp-hidden", !on);
+        },
+        onResumeRequest: null,
+    };
+})();
+
 //@line 1 "src/main.js"
 //////////////////////////////////////////////////////////////////////////////////////
 // Entry Point
 
 window.addEventListener("load", function() {
     loadHighScores();
+    pewUI.init();
     initRenderer();
     atlas.create();
     initSwipe();

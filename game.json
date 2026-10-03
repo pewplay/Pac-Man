@@ -3,19 +3,11 @@
   "title": "Pac-Man",
   "description": "Eat every dot and dodge four ghosts in a faithful remake of Pac-Man, with Ms. Pac-Man and random Cookie-Man mazes. Free in your browser.",
   "about": "This Pac-Man is an accurate remake of the 1980 arcade classic, rebuilt from research into how the original machine really works. The ghosts follow their authentic personalities: Blinky chases you directly, Pinky tries to cut you off, and Inky and Clyde keep you guessing.\n\nFrom the title screen you can choose three games. Pac-Man uses the famous original maze, Ms. Pac-Man brings her colorful mazes, and Cookie-Man generates brand new random mazes as you advance. Each game also offers a Turbo mode, a Practice mode where you can pick a level, slow down time and rewind, the classic cutscenes, and a Learn screen that introduces the ghosts and fruit.\n\nIt is perfect for retro fans who want the real arcade feel, and for newcomers who want a place to practice before chasing a high score.",
-  "howToPlay": "Guide Pac-Man through the maze and eat every dot to clear the level. Avoid the ghosts, or eat a flashing power pellet to turn them blue and chase them for bonus points. Grab the fruit that appears for extra score. You lose a life when a ghost catches you, and the game ends when all lives are gone.",
+  "howToPlay": "Pick Pac-Man, Ms. Pac-Man or Cookie-Man on the title screen, then choose Play. Guide your hero through the maze and eat every dot to clear the level. Avoid the four ghosts, or eat a flashing power pellet to turn them blue and chase them for bonus points. Grab the fruit when it appears for extra score. You lose a life when a ghost catches you, earn an extra life at 10,000 points, and the game ends when all lives are gone. On a keyboard use the arrow keys; on a phone or tablet swipe anywhere or use the on-screen D-pad.",
   "controls": [
     {
       "input": "Arrow keys",
       "action": "Move Pac-Man and navigate menus"
-    },
-    {
-      "input": "Swipe",
-      "action": "Move Pac-Man on touch screens"
-    },
-    {
-      "input": "Click / Tap",
-      "action": "Choose menu options and open the in-game menu"
     },
     {
       "input": "Enter",
@@ -23,11 +15,31 @@
     },
     {
       "input": "Esc",
-      "action": "Open the menu / go back"
+      "action": "Pause and open the in-game menu / go back"
+    },
+    {
+      "input": "M",
+      "action": "Turn sound on or off"
+    },
+    {
+      "input": "Mouse click / Tap",
+      "action": "Choose menu options and buttons"
+    },
+    {
+      "input": "Swipe or on-screen D-pad",
+      "action": "Move Pac-Man on touch screens (the turn is queued until the next corner)"
+    },
+    {
+      "input": "Pause button",
+      "action": "Open the in-game menu on touch screens"
+    },
+    {
+      "input": "Shift / 1 / 2",
+      "action": "Practice mode: rewind, slow motion (also available as on-screen buttons)"
     }
   ],
   "tips": [
-    "Press or swipe the next direction just before a corner so Pac-Man turns without slowing down.",
+    "Press, swipe or tap the D-pad toward the next direction just before a corner: the turn is remembered, so Pac-Man takes it without slowing down.",
     "Save the power pellets until ghosts are close, then eat as many blue ghosts as you can for up to 1600 points each.",
     "Pac-Man moves slightly faster through empty corridors than when eating dots, so clear paths are good escape routes.",
     "Use Practice mode to pick a later level and study how the ghosts behave before playing for real."
@@ -39,11 +51,15 @@
     },
     {
       "question": "Can I play on a phone or tablet?",
-      "answer": "Yes. Swipe in the direction you want Pac-Man to go and tap the menus. The maze is tall, so it fits best on a phone held upright."
+      "answer": "Yes. The maze fills the screen in portrait or landscape, with an on-screen D-pad placed outside the maze. You can also swipe anywhere to steer, and tap the menus and the pause button."
     },
     {
       "question": "What is the difference between Pac-Man, Ms. Pac-Man and Cookie-Man?",
       "answer": "They share the same rules but use different mazes: the original Pac-Man maze, the Ms. Pac-Man mazes, or randomly generated mazes in Cookie-Man. Your high score is saved in your browser for each game."
+    },
+    {
+      "question": "Is my high score saved?",
+      "answer": "Yes. The best score for each game and speed is saved in your browser, so it is still there next time you play on the same device."
     }
   ],
   "category": "Arcade",
